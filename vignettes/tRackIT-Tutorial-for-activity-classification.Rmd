@@ -1,0 +1,386 @@
+---
+title: "Activity classification with the tRackIT R-Package"
+author:
+  affiliation: Philipps-University of Marburg, Environmental informatics
+  corresponding author email: <jannisgot@gmail.com>
+  name: Jannis Gottwald
+date: "`r format(Sys.time(), '%d %m, %y')`"
+output:
+  html_document:
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+  word_document:
+    toc: yes
+    toc_depth: '4'
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include = F}
+knitr::opts_chunk$set(echo = T, message = F, warning = F, tidy = T,
+                      fig.width=12, fig.height=12)
+```
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy() # Allow copy code options in html file
+```
+
+```{r,results='hide', include=FALSE}
+draw_confusion_matrix <- function(cm, ttle) {
+  
+  total <- sum(cm$table)
+  res <- as.numeric(cm$table)
+  
+  # Generate color gradients. Palettes come from RColorBrewer.
+  greenPalette <- c("#F7FCF5","#E5F5E0","#C7E9C0","#A1D99B","#74C476","#41AB5D","#238B45","#006D2C","#00441B")
+  redPalette <- c("#FFF5F0","#FEE0D2","#FCBBA1","#FC9272","#FB6A4A","#EF3B2C","#CB181D","#A50F15","#67000D")
+  getColor <- function (greenOrRed = "green", amount = 0) {
+    if (amount == 0)
+      return("#FFFFFF")
+    palette <- greenPalette
+    if (greenOrRed == "red")
+      palette <- redPalette
+    colorRampPalette(palette)(100)[10 + ceiling(90 * amount / total)]
+  }
+  
+  # set the basic layout
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title(ttle, cex.main=2)
+  
+  # create the matrix 
+  classes = colnames(cm$table)
+  rect(150, 430, 240, 370, col=getColor("green", res[1]))
+  text(195, 435, classes[1], cex=1.2)
+  rect(250, 430, 340, 370, col=getColor("red", res[3]))
+  text(295, 435, classes[2], cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col=getColor("red", res[2]))
+  rect(250, 305, 340, 365, col=getColor("green", res[4]))
+  text(140, 400, classes[1], cex=1.2, srt=90)
+  text(140, 335, classes[2], cex=1.2, srt=90)
+  
+  # add in the cm results
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}
+````
+
+## The tRackIT package
+
+The tRackIT R package provides a range of functionalities for processing data recorded with automatic telemetry systems. It is specifically tailored to data recorded with one of the sensors from the tRackIT ecosystem (Höchst & Gottwald et al 2021, Gottwald and Lampe et al. 2020, Gottwald 2019), but can also be used for other systems. This tutorial will first explain the basic functionalities in terms of project and tagged individual management.  Subsequently, the processing steps for classification of VHF signals into fundamental behaviours with the help of specially trained machine-learning models (Gottwald et al. 2022) will be presented. The dataset used in this tutorial was created to test the transferability of our model trained on bat movements to observed movements of a middle spotted woodpecker. See chapter validation and the corresponding publication for details. This work is conducted within the Natur 4.0 | Sensing Biodiversity project (https://www.uni-marburg.de/de/fb19/natur40). Please download the tutorial data from (doifjgkug). 
+
+## Package installation
+
+The tRackIT R-package uses dependencies that are not published on CRAN. So before we install the package, we install these dependencies
+
+```{r, eval = FALSE}
+library(remotes)
+Sys.setenv("R_REMOTES_NO_ERRORS_FROM_WARNINGS" = "true") 
+#fast rolling windows 
+install_github("andrewuhl/RollingWindow")
+#fortran based triangulation algorithms
+install_github("barryrowlingson/telemetr")
+
+```
+
+Now we can install the actual package from the Nature40 gitHub page.
+
+```{r, eval = FALSE}
+install_github(Nature40/tRackIT)
+```
+
+After the package has been installed please store the two model files from the downloaded data folder *tRackIT_activity/models* (m_r1.rds, m_r2.rds) into the extdata folder of the tRackIT-package.
+
+
+## Initialize a project
+For reasons of interchangeability of tRackIT projects the workflow requires the initiation of a project. A project folder (projroot) with various subfolders for products and reference data as well as a projectfile that contains a list in which all paths are stored, a data.frame with coordinates of tRackIT-stations and a data.frame with information on tagged individuals is created by the **initProject()** function. In addition, the path to absolute raw data, as created by the [software](https://github.com/Nature40/tRackIT-OS) running on the stations, which may be stored on an external hard disk and do not need to be integrated into the project, can be specified in the **initProject()**  function. The epsg code of the coordinate system of the stations needs to be provided. Coordinates will be transformed to Lat/Lon.
+
+Since data on tagged individuals and stations may be stored in tables of different style, the names of the columns containing the most important informations must be passed to the **initProject()** function. Columns that are not available need to be set to NULL. (e.g. weight_col=NULL, o_col=NULL)
+
+
+``` {r, eval = TRUE, message=FALSE}
+
+library(tRackIT)
+#get table with station information 
+stations<-data.table::fread("H:/projects/repositories/active_passive/wood_pecker/data/reference_data/stations_mof_2021.csv" )
+#get (create) data frame with information of tagged individuals
+tags<-data.frame(ID=c("woodpecker"), species="Dendrocopos major", sex="male", age="ad", weight="20g", rep.state="breeding", start="2021-06-10", end="2021-06-14", frequency=150050, duration_min=0.012, duration_max=0.025)
+
+#initialize tRackIT project
+?initProject
+proj<-initProject(projroot = "H:/projects/repositories/active_passive/wood_pecker/",logger_data_raw = "H:/projects/repositories/active_passive/wood_pecker/woodpecker_raw/", stations= stations, s_col = "station", x_col = "X", y_col = "Y", o_col = "orientation", r_col="receiver", tags=tags, id_col = "ID", spec_col = "species", sex_col = "sex", age_col = "age", weight_col = "weight", rep_col = "rep.state", start_col = "start", end_col = "end",dmax_col = "duration_max", dmin_col = "duration_min", freq_col = "frequency", epsg=4326, tz ="CET" )
+
+````
+
+The created folder structure looks like this
+
+```{r,results='hide', include=FALSE}
+library(data.tree)
+library(plyr)
+path <- c(
+    "projroot/results/",
+    "projroot/R/",
+    "projroot/R/scripts/",
+    "projroot/R/fun/",
+    "projroot/data/batch_awk/", 
+    "projroot/data/calibration_curves/", 
+    "projroot/data/catalogues/", 
+    "proroot/data/correction_values/", 
+    "projroot/data/individuals/",
+    "projroot/data/logger_data_csv/",
+    "projroot/data/models/",
+    "projroot/data/param_lst/",
+    "projroot/data/reference_data/"
+    
+)
+x <- lapply(strsplit(path, "/"), function(z) as.data.frame(t(z)))
+x <- rbind.fill(x)
+x$pathString <- apply(x, 1, function(x) paste(trimws(na.omit(x)), collapse="/"))
+(folder.structure <- data.tree::as.Node(x))
+```
+
+```{r}
+folder.structure
+```
+
+
+## Initializing individuals
+
+The **initAnimal()** function creates a subdirectory in *projroot/data/individuals/* with different subdirectories for data processing products as well as an animal file containing a list of meta data information such as species, sex, age or reproductive state. Again, if any of the meta data information is not available, set it =NULL. 
+
+
+```{r, eval = TRUE}
+#?initAnimal
+
+# initialize ids
+
+?initAnimal
+anml<-initAnimal(proj, saveAnml = TRUE, animalID = proj$tags$ID[1], species = proj$tags$species[1], age = proj$tags$age[1], sex = proj$tags$sex[1], weight = proj$tags$weight[1], rep.state = proj$tags$rep.state[1], freq = proj$tags$frequency[1], start = proj$tags$start[1], end = proj$tags$end[1], duration_min = proj$tags$duration_min[1], duration_max = proj$tags$duration_max[1] )
+  
+
+```
+
+Folder structure looks like this:
+```{r,results='hide', include=FALSE}
+path <- c(
+    
+    "projroot/data/individuals/woodpecker/bearings/",
+    "projroot/data/individuals/woodpecker/bearings_filtered/",
+    "projroot/data/individuals/woodpecker/calibrated/",
+    "projroot/data/individuals/woodpecker/classification/",
+    "projroot/data/individuals/woodpecker/filtered/",
+    "projroot/data/individuals/woodpecker/filtered_awk/",
+    "projroot/data/individuals/woodpecker/gps_timematch/",
+    "projroot/data/individuals/woodpecker/imputed/",
+    "projroot/data/individuals/woodpecker/logger_timematch/",
+    "projroot/data/individuals/woodpecker/station_timematch/",
+    "projroot/data/individuals/woodpecker/triangulations/",
+    "projroot/data/individuals/woodpecker/variables/",
+    "projroot/data/individuals/woodpecker/woodpecker_idFile.rds/"
+    
+    
+)
+x <- lapply(strsplit(path, "/"), function(z) as.data.frame(t(z)))
+x <- rbind.fill(x)
+x$pathString <- apply(x, 1, function(x) paste(trimws(na.omit(x)), collapse="/"))
+(folder.structure <- data.tree::as.Node(x))
+```
+
+```{r}
+folder.structure
+```
+
+### get Project and individuals
+
+The work steps described above only have to be carried out once. Afterwards, the project file can simply be read into the working environment with the function **getProject ()** and each individual with the function **getAnimal()**.
+
+
+```{r, eval = TRUE}
+
+proj<-getProject(projroot ="H:/projects/repositories/active_passive/wood_pecker/",plot = TRUE)
+```
+
+```{r, eval = TRUE}
+
+anml<-getAnimal(projList = proj, animalID = "woodpecker")
+
+print(anml$meta)
+
+```
+
+## raw data processing
+
+In this step, the raw data recorded on the stations is combined into one file per station. NOTE:
+This part of the tutorial is only valid for data recorded with tRackIT stations. Stations of other designs may have a different data structure. 
+On tRackIT stations, new csv files are created for the current run every time the station reboots. Over the course of one recording period, a large number of individual files can be created, which are to be combined in the next step and saved within the project structure. The **read.logger.data.tRackIT()** function does this for us. In order for it to do this, the path to the folder containing the raw data must have been specified in the **initProject()** function (argument logger_data_raw=) and the data must be present in the folder in the following structure: *logger_data_raw/name-of-station/radiotracking/files.csv*. 
+
+
+
+
+```{r, eval = FALSE, results='hide'}
+
+read.logger.data.tRackIT(projList = proj)
+
+```
+
+This step also only needs to be carried out once per project or per data collection per project.
+
+## Processing of individuals for activity classification
+
+
+Processing of individuals involves
+
++ Filtering
++ calculation of variables for ML-classifiction
++ Classification
++ Aggregation
+
+
+### Filtering
+
+Individuals are filterd from the raw data compiled in the prvious step by frequency, signal length, and start and end of the tagging period using the **filter.tRackIT()** function. 
+
+
+
+
+```{r, eval = FALSE}
+
+filter.tRackIT(projList = proj,animal = anml, freq_er = 2, path_to_data = proj$path$csv, d_min = anml$meta$duration_min, d_max = anml$meta$duration_max )
+
+```
+### calculation of variables for ML-classifiction
+
+Here we use the **activity.vars.tRackIT()** function for ML-variable calculation. I initially divides the data set of each station into 5-minute intervals. For each interval, it selects the receiver with the most data entries out of 4 possible receivers. If available, the receiver with the second most entries is also selected. Then it calculates various predictor variables that mirror the variation of the signal strengths over time by applying rolling windows to the classified VHF-data recorded by the tRackIT- stations. In order to smooth out potentially distracting fluctuations in the signal,  a hampel filter as well as a mean and a max filter is applied to the raw data of the main receiver in a rolling window of +/- 10 data entries. For the raw data as well as the smoothed data  the variance, standard deviation, kurtosis, skewness and sum of squares, also in a rolling window of +/- 10 data points, are calculated. 
+
+
+
+
+
+```{r, eval = FALSE, results='hide'}
+
+#get the animal you want to process
+anml<-getAnimal(projList = proj, animalID = "woodpecker")
+#calculate variables
+activity.vars.tRackIT(animal = anml, tcol = "timestamp", scol = "max", dcol = "receiver", tzone = "UTC", rscale = 0)
+```
+### Classification
+
+Here we use the **activity.vars.predict.tRackIT()** function to apply the trained models to the data created in the step before. The two models (m_r1.rds, m_r2.rds, both>1 kb) from the directory *tRackIT_activity/models*need to be stored in the extdata directory of the tRackIT package. 
+
+
+```{r, eval = FALSE}
+activity.predict.tRackIT(animal = anml)
+```
+
+The classified files are stored in *wood_pecker/data/individuals/woodpecker/classification/*. Lets take a look:
+
+```{r, eval = TRUE}
+library(ggplot2)
+data<-data.table::fread(list.files(anml$path$classification, pattern="class",full.names = TRUE)[1])
+
+#plot data for BirdRack obeservation period
+ggplot(data[data$timestamp>="2021-06-11" & data$timestamp<="2021-06-14",], aes(x=timestamp, y=max, color=prediction))+geom_point()
+
+```
+
+
+### Aggregation
+
+Finally, the data can be aggregated by choosing the most frequent class value in a given time interval using the function **activity.aggregate.tRackIT()**. Here we chose an inteval of 1 Minute. The aggregated data is in *projroot/data/individuals/woodpecker/classification/*.
+
+```{r, eval = TRUE}
+activity.aggregate.tRackIT(animal=anml, avalue = 1, tzone = "UTC")
+
+```
+
+
+### Validation
+
+For the validation of applicability to birds we attached a transmitter on the back of a middle spotted woodpecker. Next, we set up a daylight variant of our custom-made video recorder units - “BatRack” units - in front of its nesting tree to automatically record videos of its behavior (Gottwald & Lampe et al. 2021; https://nature40.github.io/BatRack/ (vid 2)). BatRacks consisted of a VHF antenna and an video unit connected to a raspberry pi mini computer. The camera unit was automatically triggered by the VHF-signal of the woodpeckers transmitter and started recording if the VHF-signal strength exceeded a threshold of -60 dBW, i.e. when the bird flew close to its nesting tree and the BatRack-system. A typical recorded sequence consisted of flying, hopping up the stem and a very short feeding sequence where the bird sat still at the entrance of the nest. Since the feeding sequence was in most cases shorter than 3 consecutive vhf-signals we classified all signals that were simultaneously recorded by one or more of the tRackIT-stations as active. In order to generate sufficient inactive sequences, we sampled 1000 random data points from signals recorded by one or more tRackIT-stations each night between 0 and 2 a.m. over four consecutive nights during the BirdRack observation period. Lets see how well our model performs:
+
+
+```{r, eval = TRUE}
+library(lubridate)
+library(caret)
+library(ggplot2)
+library(data.table)
+##connection to project
+proj<-getProject("H:/projects/repositories/active_passive/wood_pecker/")
+##connect to individual
+anml<-getAnimal(projList=proj, animalID = "woodpecker")
+
+#get al classification data
+dat<-data.table::fread(list.files(paste0(anml$path$root, "/classification/"), full.names = TRUE)[2])
+
+#convert tmestamp format to local timezone
+dat$timestamp<-lubridate::with_tz(dat$timestamp, "CET")
+#get data frame with observations and corresponding videos
+tag<-fread(list.files(proj$path$ref, pattern="tagging",full.names = TRUE)[1])
+tag$start<-as.POSIXct(tag$start, tz="CET")
+tag$end<-as.POSIXct(tag$end, tz="CET")
+#select data with observations
+feed<-data.frame()
+for(i in 1:nrow(tag)){
+  tmp<-dat[dat$timestamp>=tag$start[i] & dat$timestamp<=tag$end[i],]
+  
+  feed<-rbind(feed, tmp)
+  
+}
+
+#activity observation: short flying sequence to tree--> very short feeding sequence (~3-5 sec)-->hopping sequence upwards tree-->short flying sequence from tree ---> all tagged as active          
+feed<-feed[!duplicated(feed$timestamp),]
+table(feed$prediction)
+feed$observed<-"active"
+
+#passive sequences: random sample of 1000 data points between 0 and 2 am for 4 dates of observation period; 4000 data points 
+sleep<-data.frame()
+for(d in c("2021-06-11", "2021-06-12","2021-06-13", "2021-06-14")){
+  
+  tmp<-dat[dat$timestamp>=paste0(d, " 00:00:00") & dat$timestamp<=paste0(d, " 02:00:00"),]
+  tmp<-tmp[sample(nrow(tmp), 2200), ]
+  sleep<-rbind(sleep, tmp)
+  
+}
+table(sleep$prediction)  
+sleep$observed<-"passive"  
+
+#combine to groundtruth
+woodpecker_ground_truth<-rbind(feed, sleep)
+
+#calculate confusion matrix
+cmwp<-confusionMatrix(as.factor(woodpecker_ground_truth$prediction),as.factor(woodpecker_ground_truth$observed))
+draw_confusion_matrix(cmwp, ttle = "woodpecker groundtruth")
+
+```
+
