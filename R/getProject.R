@@ -20,6 +20,16 @@ getProject = function(projroot = ".", plot=FALSE){
   
   project<-readRDS(paste0(projroot,basename(projroot) ,"_projectFile.rds"))
   
+  b<-basename(projroot)
+  
+  for(p in 1:length(project$path)){
+    
+    project$path[[p]]<-gsub(paste0(".*",b),"",   project$path[[p]])
+    project$path[[p]]<-paste0(projroot,project$path[[p]] )
+    
+  }
+  
+  
   if(plot==TRUE){
     stations<-project$stations
     epsg<-project$epsg
